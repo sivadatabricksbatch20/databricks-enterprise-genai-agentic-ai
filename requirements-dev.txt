@@ -3,7 +3,7 @@
 
 # Databricks integrations (ML runtimes ship these; serverless notebooks install them with %pip)
 mlflow>=3.1,<4
-databricks-vectorsearch>=0.50
+databricks-ai-search>=0.83,<1
 
 # Tests
 pytest==8.3.4

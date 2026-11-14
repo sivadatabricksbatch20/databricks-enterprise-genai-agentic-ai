@@ -36,8 +36,11 @@ notebook_path = dbutils.notebook.entry_point.getDbutils().notebook().getContext(
 REPO_ROOT = "/Workspace" + notebook_path.split("/notebooks/")[0]
 sys.path.insert(0, REPO_ROOT); os.chdir(REPO_ROOT)
 dbutils.widgets.dropdown("profile", "learning", ["learning", "enterprise"], "Profile")
+dbutils.widgets.dropdown("debug", "yes", ["no", "yes"], "Show configuration trace")
 from src.utils.config import load_config
-cfg = load_config(dbutils.widgets.get("profile"))
+from src.utils.enterprise_setup import prepare_enterprise_config
+cfg = load_config(dbutils.widgets.get("profile"), debug=dbutils.widgets.get("debug"))
+cfg = prepare_enterprise_config(cfg, spark, REPO_ROOT, debug=dbutils.widgets.get("debug"))
 
 # COMMAND ----------
 
@@ -62,9 +65,9 @@ from pathlib import Path
 from src.ingestion.documents import load_file
 from src.processing.chunking import chunk_document
 
-doc = load_file(Path(cfg["paths"]["sample_documents"]) / "pipeline_troubleshooting_guide.md")
+doc = load_file(Path(cfg["paths"]["sample_documents"]) / "pipeline_troubleshooting_guide.md", debug=cfg["_debug"])
 size, overlap = cfg["chunking"]["chunk_size"], cfg["chunking"]["chunk_overlap"]
-chunks = chunk_document(doc, size, overlap, cfg["chunking"]["min_chunk_chars"])
+chunks = chunk_document(doc, size, overlap, cfg["chunking"]["min_chunk_chars"], debug=cfg["_debug"])
 print(f"{doc.source_name}: {len(doc.text)} characters → {len(chunks)} chunks (size {size}, overlap {overlap})")
 display(pd.DataFrame([{**c.to_dict(), "length": len(c.text), "text": c.text[:120] + "…"} for c in chunks])
         [["chunk_id", "chunk_index", "length", "start_char", "text"]])
@@ -78,7 +81,7 @@ display(pd.DataFrame([{**c.to_dict(), "length": len(c.text), "text": c.text[:120
 # COMMAND ----------
 
 for s in (300, 600, 1200):
-    n = len(chunk_document(doc, s, min(overlap, s // 4)))
+    n = len(chunk_document(doc, s, min(overlap, s // 4), debug=cfg["_debug"]))
     print(f"chunk_size={s:5}: {n} chunks")
 
 # COMMAND ----------
@@ -90,8 +93,9 @@ for s in (300, 600, 1200):
 
 from src.ingestion.documents import discover_files
 from src.retrieval.indexing import chunk_documents
-docs = [load_file(p) for p in discover_files(cfg["paths"]["sample_documents"], cfg["ingestion"]["supported_types"])]
-all_chunks = chunk_documents(docs, cfg)
+docs = [load_file(p, debug=cfg["_debug"]) for p in
+        discover_files(cfg["paths"]["sample_documents"], cfg["ingestion"]["supported_types"], debug=cfg["_debug"])]
+all_chunks = chunk_documents(docs, cfg, debug=cfg["_debug"])
 by_doc = {}
 for c in all_chunks:
     by_doc[c.source_name] = by_doc.get(c.source_name, 0) + 1

@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Protocol
 
 from src.utils.databricks_client import DatabricksClient, DatabricksHTTPError
+from src.utils.debug import debug_trace, resolve_debug
 from src.utils.logging import get_logger, log_event
 from src.utils.retry import RetryError, retry_call
 
@@ -57,6 +58,7 @@ class DatabricksLLM:
     max_retries: int = 3
     client: DatabricksClient | None = None
     total_usage: dict[str, int] = field(default_factory=lambda: {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0})
+    debug: bool = False
 
     def _client(self) -> DatabricksClient:
         if self.client is None:
@@ -69,6 +71,9 @@ class DatabricksLLM:
             payload["tools"] = tools
             payload["tool_choice"] = "auto"
         t0 = time.perf_counter()
+        debug_trace(self.debug, "LLM",
+                    f"request endpoint={self.endpoint!r} messages={len(messages)} tools={len(tools or [])} "
+                    f"temperature={self.temperature} max_tokens={self.max_tokens}")
 
         def call():
             try:
@@ -106,6 +111,8 @@ class DatabricksLLM:
         out = LLMResponse(_text_from_content(message.get("content")), tool_calls, usage, resp.get("model", self.endpoint),
                           round((time.perf_counter() - t0) * 1000, 1))
         log_event(log, "llm.done", endpoint=self.endpoint, latency_ms=out.latency_ms, tool_calls=len(tool_calls), **usage)
+        debug_trace(self.debug, "LLM",
+                    f"response model={out.model!r} latency_ms={out.latency_ms} usage={usage} tool_calls={len(tool_calls)}")
         return out
 
 
@@ -127,12 +134,13 @@ class ScriptedLLM:
         return reply if isinstance(reply, LLMResponse) else LLMResponse(content=reply, model="scripted-test-double")
 
 
-def build_llm(cfg: dict[str, Any]) -> LLM:
+def build_llm(cfg: dict[str, Any], debug: bool | str | None = None) -> LLM:
     llm = cfg["llm"]
+    debug_on = resolve_debug(debug, cfg)
     if llm.get("provider", "databricks") == "databricks":
         return DatabricksLLM(endpoint=llm["endpoint"], temperature=float(llm.get("temperature", 0.0)),
                              max_tokens=int(llm.get("max_tokens", 700)), timeout_s=float(llm.get("timeout_s", 60)),
-                             max_retries=int(llm.get("max_retries", 3)))
+                             max_retries=int(llm.get("max_retries", 3)), debug=debug_on)
     if llm["provider"] == "scripted":
         return ScriptedLLM()
     raise ValueError(f"Unknown LLM provider '{llm['provider']}'")

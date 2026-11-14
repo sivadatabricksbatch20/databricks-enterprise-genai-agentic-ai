@@ -44,8 +44,11 @@ notebook_path = dbutils.notebook.entry_point.getDbutils().notebook().getContext(
 REPO_ROOT = "/Workspace" + notebook_path.split("/notebooks/")[0]
 sys.path.insert(0, REPO_ROOT); os.chdir(REPO_ROOT)
 dbutils.widgets.dropdown("profile", "learning", ["learning", "enterprise"], "Profile")
+dbutils.widgets.dropdown("debug", "yes", ["no", "yes"], "Show configuration trace")
 from src.utils.config import load_config
-cfg = load_config(dbutils.widgets.get("profile"))
+from src.utils.enterprise_setup import prepare_enterprise_config
+cfg = load_config(dbutils.widgets.get("profile"), debug=dbutils.widgets.get("debug"))
+cfg = prepare_enterprise_config(cfg, spark, REPO_ROOT, debug=dbutils.widgets.get("debug"))
 
 # COMMAND ----------
 
@@ -59,9 +62,12 @@ cfg = load_config(dbutils.widgets.get("profile"))
 
 import json
 from pathlib import Path
-data = json.loads((Path(cfg["paths"]["pipeline_logs"]) / "pipeline_runs.json").read_text())
-print(data["_notice"], "| 'today' in this synthetic world:", data["as_of_date"])
-display(pd.DataFrame([{k: r[k] for k in ("run_id", "pipeline_name", "run_date", "status")} for r in data["adf_pipeline_runs"]]))
+if cfg["profile"] == "learning":
+    data = json.loads((Path(cfg["paths"]["pipeline_logs"]) / "pipeline_runs.json").read_text())
+    print(data["_notice"], "| 'today' in this synthetic world:", data["as_of_date"])
+    display(pd.DataFrame([{k: r[k] for k in ("run_id", "pipeline_name", "run_date", "status")} for r in data["adf_pipeline_runs"]]))
+else:
+    print("Enterprise monitoring source:", cfg["agent"]["monitoring_source"])
 
 # COMMAND ----------
 

@@ -26,7 +26,11 @@
 
 # COMMAND ----------
 
-# MAGIC %pip install -q pypdf==5.1.0
+# MAGIC %pip install -q pypdf==5.1.0 "databricks-ai-search>=0.83,<1"
+
+# COMMAND ----------
+
+dbutils.library.restartPython()
 
 # COMMAND ----------
 
@@ -35,9 +39,12 @@ notebook_path = dbutils.notebook.entry_point.getDbutils().notebook().getContext(
 REPO_ROOT = "/Workspace" + notebook_path.split("/notebooks/")[0]
 sys.path.insert(0, REPO_ROOT); os.chdir(REPO_ROOT)
 dbutils.widgets.dropdown("profile", "learning", ["learning", "enterprise"], "Profile")
+dbutils.widgets.dropdown("debug", "yes", ["no", "yes"], "Show configuration trace")
 dbutils.widgets.text("request", "Why did yesterday's customer ingestion pipeline fail?", "Request")
 from src.utils.config import load_config
-cfg = load_config(dbutils.widgets.get("profile"))
+from src.utils.enterprise_setup import prepare_enterprise_config
+cfg = load_config(dbutils.widgets.get("profile"), debug=dbutils.widgets.get("debug"))
+cfg = prepare_enterprise_config(cfg, spark, REPO_ROOT, debug=dbutils.widgets.get("debug"))
 
 # COMMAND ----------
 
@@ -81,22 +88,26 @@ print("Structured root causes:", [c["category"] for c in res_llm.root_causes])
 from src.tools.actions import ActionExecutor, ApprovalError
 engineer = Principal("erin.engineer", ("data_engineer",))
 r = rules_agent.investigate("Yesterday's customer ingestion failed. Please restart it.", engineer)
-approval = r.approval_requests[0]
-print("Approval:", approval["approval_id"], approval["status"])
+if r.approval_requests:
+    approval = r.approval_requests[0]
+    print("Approval:", approval["approval_id"], approval["status"])
 
-store = rules_agent.tools.approvals
-executor = ActionExecutor(store, actions_enabled=cfg["agent"]["actions_enabled"])
-for step, fn in [("execute before approval", lambda: executor.execute(approval["approval_id"], "lead")),
-                 ("self-approval", lambda: store.decide(approval["approval_id"], "erin.engineer", True))]:
+    store = rules_agent.tools.approvals
+    executor = ActionExecutor(store, actions_enabled=False)
+    for step, fn in [("execute before approval", lambda: executor.execute(approval["approval_id"], "lead")),
+                     ("self-approval", lambda: store.decide(approval["approval_id"], "erin.engineer", True))]:
+        try:
+            fn()
+        except ApprovalError as exc:
+            print(f"{step}: blocked → {exc}")
+    store.decide(approval["approval_id"], "olivia.oncall-lead", True)
     try:
-        fn()
+        executor.execute(approval["approval_id"], "olivia.oncall-lead")
     except ApprovalError as exc:
-        print(f"{step}: blocked → {exc}")
-store.decide(approval["approval_id"], "olivia.oncall-lead", True)
-try:
-    executor.execute(approval["approval_id"], "olivia.oncall-lead")
-except ApprovalError as exc:
-    print("execute after approval: blocked →", exc)
+        print("execute after approval: blocked →", exc)
+else:
+    print("No approval request was created. Inspect the investigation result for available run evidence.")
+    print(r.answer)
 
 # COMMAND ----------
 

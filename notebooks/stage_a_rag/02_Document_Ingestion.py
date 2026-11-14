@@ -1,4 +1,8 @@
 # Databricks notebook source
+# /// script
+# [tool.databricks.environment]
+# environment_version = "6"
+# ///
 # MAGIC %md
 # MAGIC # Stage A · 02 — Document Ingestion
 # MAGIC
@@ -37,8 +41,11 @@ notebook_path = dbutils.notebook.entry_point.getDbutils().notebook().getContext(
 REPO_ROOT = "/Workspace" + notebook_path.split("/notebooks/")[0]
 sys.path.insert(0, REPO_ROOT); os.chdir(REPO_ROOT)
 dbutils.widgets.dropdown("profile", "learning", ["learning", "enterprise"], "Profile")
+dbutils.widgets.dropdown("debug", "yes", ["no", "yes"], "Show configuration trace")
 from src.utils.config import load_config
-cfg = load_config(dbutils.widgets.get("profile"))
+from src.utils.enterprise_setup import prepare_enterprise_config
+cfg = load_config(dbutils.widgets.get("profile"), debug=dbutils.widgets.get("debug"))
+cfg = prepare_enterprise_config(cfg, spark, REPO_ROOT, debug=dbutils.widgets.get("debug"))
 
 # COMMAND ----------
 
@@ -51,9 +58,9 @@ cfg = load_config(dbutils.widgets.get("profile"))
 from pathlib import Path
 from src.ingestion.documents import discover_files, load_file
 
-files = discover_files(cfg["paths"]["sample_documents"], cfg["ingestion"]["supported_types"])
+files = discover_files(cfg["paths"]["sample_documents"], cfg["ingestion"]["supported_types"], debug=cfg["_debug"])
 for path in files:
-    doc = load_file(path)
+    doc = load_file(path, debug=cfg["_debug"])
     print(f"{doc.doc_type:5} {doc.source_name:48} {len(doc.text):6} chars  hash={doc.content_hash[:12]}…")
 
 # COMMAND ----------
@@ -72,7 +79,8 @@ if cfg["ingestion"]["registry"] == "delta":
     registry = DeltaRegistry(spark, cfg["unity_catalog"]["documents_table"])
 else:
     registry = FileRegistry(Path(cfg["paths"]["work_dir"]) / "document_manifest.json")
-result = ingest_directory(cfg["paths"]["sample_documents"], registry, cfg["ingestion"]["supported_types"])
+result = ingest_directory(cfg["paths"]["sample_documents"], registry, cfg["ingestion"]["supported_types"],
+                          debug=cfg["_debug"])
 print(result.summary())
 display(pd.DataFrame([d.metadata() for d in result.to_process]) if result.to_process else
         pd.DataFrame(registry.all()))
@@ -91,7 +99,7 @@ tmp = Path(tempfile.mkdtemp())
 src_file = Path(cfg["paths"]["sample_documents"]) / "ingestion_job_restart_runbook.md"
 shutil.copy(src_file, tmp / "runbook.md")
 shutil.copy(src_file, tmp / "runbook_copy.md")
-demo = ingest_directory(tmp, FileRegistry(tmp / "manifest.json"), ["md"])
+demo = ingest_directory(tmp, FileRegistry(tmp / "manifest.json"), ["md"], debug=cfg["_debug"])
 print("new:", [d.source_name for d in demo.new], "| duplicates:", demo.duplicates)
 
 # COMMAND ----------

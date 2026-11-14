@@ -12,17 +12,25 @@ from src.rag.llm import LLM, build_llm
 from src.rag.pipeline import RAGPipeline
 from src.retrieval.indexing import IndexReport, index_documents
 from src.retrieval.retriever import Retriever
-from src.retrieval.vector_store import InMemoryVectorStore, VectorStore, build_vector_store
+from src.retrieval.vector_store import (
+    DatabricksVectorSearchStore, InMemoryVectorStore, VectorStore, build_vector_store,
+)
 from src.tools.registry import build_registry
+from src.utils.debug import debug_trace, resolve_debug
 
 
 def _index_path(cfg: dict[str, Any]) -> Path:
     return Path(cfg["paths"]["work_dir"]) / cfg["vector_store"].get("persist_file", "vector_index.npz")
 
 
-def build_index(cfg: dict[str, Any], embedder: Embedder | None = None, rebuild: bool = False) -> tuple[VectorStore, IngestionResult, IndexReport]:
+def build_index(cfg: dict[str, Any], embedder: Embedder | None = None, rebuild: bool = False,
+                debug: bool | str | None = None) -> tuple[VectorStore, IngestionResult, IndexReport]:
     """Ingest documents incrementally and update the vector index (learning backend persists to ``work_dir``)."""
-    embedder = embedder or build_embedder(cfg)
+    debug_on = resolve_debug(debug, cfg)
+    debug_trace(debug_on, "PIPELINE",
+                f"build_index starting profile={cfg.get('profile')!r} rebuild={rebuild} "
+                f"documents_root={cfg['paths']['sample_documents']!r}")
+    embedder = embedder or build_embedder(cfg, debug=debug_on)
     work = Path(cfg["paths"]["work_dir"])
     manifest, index_file = work / "document_manifest.json", _index_path(cfg)
     in_memory = cfg["vector_store"].get("backend", "in_memory") == "in_memory"
@@ -33,26 +41,44 @@ def build_index(cfg: dict[str, Any], embedder: Embedder | None = None, rebuild: 
         store = InMemoryVectorStore.load(index_file)
         if store.dimension != embedder.dimension:
             manifest.unlink(missing_ok=True)
-            store = InMemoryVectorStore(dimension=embedder.dimension)
+            store = InMemoryVectorStore(dimension=embedder.dimension, debug=debug_on)
     else:
-        store = build_vector_store(cfg, embedder.dimension)
+        store = build_vector_store(cfg, embedder.dimension, debug=debug_on)
+    if isinstance(store, DatabricksVectorSearchStore):
+        created = store.ensure_direct_index()
+        if created or (manifest.exists() and store.count() == 0):
+            manifest.unlink(missing_ok=True)
     registry = FileRegistry(manifest)
-    result = ingest_directory(cfg["paths"]["sample_documents"], registry, cfg["ingestion"]["supported_types"])
-    report = index_documents(result.to_process, cfg, embedder, store, {d.doc_id for d in result.updated})
+    result = ingest_directory(cfg["paths"]["sample_documents"], registry, cfg["ingestion"]["supported_types"],
+                              debug=debug_on, record=False)
+    report = index_documents(result.to_process, cfg, embedder, store, {d.doc_id for d in result.updated},
+                             debug=debug_on)
     if in_memory:
         store.save(index_file)  # type: ignore[union-attr]
+    for document in result.to_process:
+        registry.upsert(document)
+    debug_trace(debug_on, "PIPELINE", f"build_index complete ingestion={result.summary()} index={report.as_dict()}")
     return store, result, report
 
 
 def load_rag(cfg: dict[str, Any], llm: LLM | None = None, embedder: Embedder | None = None,
-             store: VectorStore | None = None) -> RAGPipeline:
-    embedder = embedder or build_embedder(cfg)
+             store: VectorStore | None = None,
+             debug: bool | str | None = None) -> RAGPipeline:
+    debug_on = resolve_debug(debug, cfg)
+    debug_trace(debug_on, "RAG", f"loading profile={cfg.get('profile')!r}")
+    embedder = embedder or build_embedder(cfg, debug=debug_on)
     if store is None:
         if cfg["vector_store"].get("backend", "in_memory") == "in_memory":
-            store = InMemoryVectorStore.load(_index_path(cfg)) if _index_path(cfg).exists() else build_index(cfg, embedder)[0]
+            store = InMemoryVectorStore.load(_index_path(cfg), debug=debug_on) if _index_path(cfg).exists() else \
+                build_index(cfg, embedder, debug=debug_on)[0]
         else:
-            store = build_vector_store(cfg, embedder.dimension)
-    return RAGPipeline(Retriever.from_config(cfg, embedder, store), llm or build_llm(cfg))
+            store = build_vector_store(cfg, embedder.dimension, debug=debug_on)
+    pipeline = RAGPipeline(Retriever.from_config(cfg, embedder, store, debug=debug_on),
+                           llm or build_llm(cfg, debug=debug_on), debug=debug_on)
+    debug_trace(debug_on, "RAG",
+                f"loaded store={type(store).__name__} embedding_model={embedder.model_name!r} "
+                f"llm={type(pipeline.llm).__name__}")
+    return pipeline
 
 
 def load_agent(cfg: dict[str, Any], llm: LLM | None = None, rag: RAGPipeline | None = None, spark=None,

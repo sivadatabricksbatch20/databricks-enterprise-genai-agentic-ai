@@ -31,7 +31,10 @@
 # COMMAND ----------
 
 # MAGIC %pip install -q databricks-vectorsearch databricks-mcp nest_asyncio pypdf==5.1.0
-# MAGIC %restart_python
+
+# COMMAND ----------
+
+dbutils.library.restartPython()
 
 # COMMAND ----------
 
@@ -43,6 +46,7 @@ dbutils.widgets.text("catalog", "main", "UC catalog")
 dbutils.widgets.text("schema", "eika", "UC schema")
 dbutils.widgets.text("vs_endpoint", "eika-vs-endpoint", "Vector Search endpoint")
 dbutils.widgets.text("embedding_endpoint", "databricks-bge-large-en", "Embedding endpoint")
+dbutils.widgets.dropdown("debug", "yes", ["no", "yes"], "Show configuration trace")
 dbutils.widgets.dropdown("create_resources", "no", ["no", "yes"], "Create endpoint and index (billable)")
 CATALOG, SCHEMA = dbutils.widgets.get("catalog"), dbutils.widgets.get("schema")
 TABLE, INDEX = f"{CATALOG}.{SCHEMA}.eika_chunks", f"{CATALOG}.{SCHEMA}.eika_chunks_index"
@@ -62,7 +66,7 @@ from src.ingestion.documents import discover_files, load_file
 from src.retrieval.indexing import chunk_documents
 from src.utils.config import load_config
 
-cfg = load_config("learning")
+cfg = load_config("learning", debug=dbutils.widgets.get("debug"))
 docs = [load_file(p) for p in discover_files(cfg["paths"]["sample_documents"], cfg["ingestion"]["supported_types"])]
 chunks = [c.to_dict() for c in chunk_documents(docs, cfg)]
 spark.sql(f"CREATE SCHEMA IF NOT EXISTS {CATALOG}.{SCHEMA}")

@@ -13,6 +13,7 @@ import time
 from typing import Any
 
 from src.rag.prompts import UNKNOWN_ANSWER
+from src.utils.debug import debug_trace, resolve_debug, short_text
 
 _WORD = re.compile(r"[a-z0-9]+")
 _SENT = re.compile(r"(?<=[.!?])\s+|\n+")
@@ -65,9 +66,14 @@ def _mean(values: list[float | None]) -> float | None:
     return round(statistics.mean(vals), 3) if vals else None
 
 
-def evaluate_rag(pipeline, dataset: list[dict[str, Any]]) -> dict[str, Any]:
+def evaluate_rag(pipeline, dataset: list[dict[str, Any]],
+                 debug: bool | str | None = None) -> dict[str, Any]:
+    debug_on = resolve_debug(debug if debug is not None else getattr(pipeline, "debug", False))
+    debug_trace(debug_on, "EVALUATION", f"starting rag_cases={len(dataset)}")
     rows = []
-    for case in dataset:
+    for case_number, case in enumerate(dataset, 1):
+        debug_trace(debug_on, "EVALUATION",
+                    f"case={case_number}/{len(dataset)} question={short_text(case['question'])!r}")
         t0 = time.perf_counter()
         res = pipeline.answer(case["question"], filters=case.get("filters"))
         latency = (time.perf_counter() - t0) * 1000
@@ -75,7 +81,7 @@ def evaluate_rag(pipeline, dataset: list[dict[str, Any]]) -> dict[str, Any]:
         cited = [s["source_name"] for s in res.sources if s["ref"] in res.cited_refs]
         expected = case.get("expected_sources", [])
         answerable = case.get("answerable", True)
-        rows.append({
+        row = {
             "question": case["question"], "answerable": answerable, "unknown": res.unknown, "error": res.error,
             "hit_at_k": hit_at_k(retrieved, expected) if answerable else None,
             "mrr": reciprocal_rank(retrieved, expected) if answerable else None,
@@ -85,7 +91,11 @@ def evaluate_rag(pipeline, dataset: list[dict[str, Any]]) -> dict[str, Any]:
             "unknown_correct": (res.unknown == (not answerable)),
             "latency_ms": round(latency, 1), "total_tokens": res.usage.get("total_tokens"),
             "answer": res.answer[:500], "retrieved": retrieved,
-        })
+        }
+        rows.append(row)
+        debug_trace(debug_on, "EVALUATION",
+                    f"case={case_number} hit_at_k={row['hit_at_k']} mrr={row['mrr']} "
+                    f"unknown_correct={row['unknown_correct']} error={row['error']!r}")
     summary = {
         "cases": len(rows),
         "retrieval_hit_rate": _mean([r["hit_at_k"] for r in rows]),
@@ -98,6 +108,7 @@ def evaluate_rag(pipeline, dataset: list[dict[str, Any]]) -> dict[str, Any]:
         "total_tokens": sum(r["total_tokens"] or 0 for r in rows),
         "errors": sum(1 for r in rows if r["error"]),
     }
+    debug_trace(debug_on, "EVALUATION", f"complete summary={summary}")
     return {"summary": summary, "rows": rows}
 
 

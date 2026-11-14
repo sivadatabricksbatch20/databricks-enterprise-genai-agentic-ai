@@ -34,9 +34,12 @@ notebook_path = dbutils.notebook.entry_point.getDbutils().notebook().getContext(
 REPO_ROOT = "/Workspace" + notebook_path.split("/notebooks/")[0]
 sys.path.insert(0, REPO_ROOT); os.chdir(REPO_ROOT)
 dbutils.widgets.dropdown("profile", "learning", ["learning", "enterprise"], "Profile")
+dbutils.widgets.dropdown("debug", "yes", ["no", "yes"], "Show configuration trace")
 dbutils.widgets.dropdown("embedding_provider", "config", ["config", "databricks", "hashing"], "Embedding provider")
 from src.utils.config import load_config
-cfg = load_config(dbutils.widgets.get("profile"))
+from src.utils.enterprise_setup import prepare_enterprise_config
+cfg = load_config(dbutils.widgets.get("profile"), debug=dbutils.widgets.get("debug"))
+cfg = prepare_enterprise_config(cfg, spark, REPO_ROOT, debug=dbutils.widgets.get("debug"))
 if dbutils.widgets.get("embedding_provider") != "config":
     cfg["embedding"]["provider"] = dbutils.widgets.get("embedding_provider")
 print("Embedding provider:", cfg["embedding"]["provider"], "| endpoint:", cfg["embedding"]["endpoint"])
@@ -85,8 +88,9 @@ print("question vs unrelated:", round(float(vecs[0] @ vecs[2]), 3))
 import time
 from src.ingestion.documents import discover_files, load_file
 from src.retrieval.indexing import chunk_documents
-docs = [load_file(p) for p in discover_files(cfg["paths"]["sample_documents"], cfg["ingestion"]["supported_types"])]
-chunks = chunk_documents(docs, cfg)
+docs = [load_file(p, debug=cfg["_debug"]) for p in
+        discover_files(cfg["paths"]["sample_documents"], cfg["ingestion"]["supported_types"], debug=cfg["_debug"])]
+chunks = chunk_documents(docs, cfg, debug=cfg["_debug"])
 t0 = time.time()
 chunk_vectors = embedder.embed([c.text for c in chunks])
 print(f"{len(chunks)} chunks → {chunk_vectors.shape} in {time.time() - t0:.1f}s "

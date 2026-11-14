@@ -16,6 +16,7 @@ from src.security.authorization import Principal
 from src.security.prompt_injection import scan
 from src.utils.logging import get_logger, log_event
 from src.utils.tracing import trace
+from src.utils.debug import debug_trace, resolve_debug, short_text
 
 log = get_logger("eika.rag")
 _CITATION = re.compile(r"\[S(\d+)\]")
@@ -43,23 +44,28 @@ class RAGAnswer:
 class RAGPipeline:
     retriever: Retriever
     llm: LLM
+    debug: bool = False
 
     @classmethod
-    def from_config(cls, cfg: dict[str, Any], llm: LLM | None = None, store: VectorStore | None = None) -> "RAGPipeline":
-        embedder = build_embedder(cfg)
+    def from_config(cls, cfg: dict[str, Any], llm: LLM | None = None, store: VectorStore | None = None,
+                    debug: bool | str | None = None) -> "RAGPipeline":
+        debug_on = resolve_debug(debug, cfg)
+        embedder = build_embedder(cfg, debug=debug_on)
         if store is None:
             persisted = Path(cfg["paths"]["work_dir"]) / cfg["vector_store"].get("persist_file", "vector_index.npz")
             if cfg["vector_store"].get("backend") == "in_memory" and persisted.exists():
-                store = InMemoryVectorStore.load(persisted)
+                store = InMemoryVectorStore.load(persisted, debug=debug_on)
             else:
-                store = build_vector_store(cfg, embedder.dimension)
-        return cls(Retriever.from_config(cfg, embedder, store), llm or build_llm(cfg))
+                store = build_vector_store(cfg, embedder.dimension, debug=debug_on)
+        return cls(Retriever.from_config(cfg, embedder, store, debug=debug_on),
+                   llm or build_llm(cfg, debug=debug_on), debug=debug_on)
 
     @trace(name="rag.answer", span_type="CHAIN")
     def answer(self, question: str, filters: dict[str, Any] | None = None, principal: Principal | None = None,
                history: list[dict[str, str]] | None = None) -> RAGAnswer:
         t0 = time.perf_counter()
         question = (question or "").strip()
+        debug_trace(self.debug, "RAG", f"answer starting question={short_text(question)!r}")
         if not question:
             return RAGAnswer(question, "Please enter a question.", [], [], True, {}, error="empty_question")
         if len(question) > MAX_QUESTION_CHARS:
@@ -72,8 +78,10 @@ class RAGPipeline:
         context = [{"ref": s["ref"], **h.chunk, "score": h.score} for s, h in zip(sources, retrieval.hits)]
         if not retrieval.hits:
             # Nothing relevant enough: say so instead of letting the model improvise
-            return RAGAnswer(question, UNKNOWN_ANSWER, [], [], True, diag,
-                             latency_ms=round((time.perf_counter() - t0) * 1000, 1))
+            result = RAGAnswer(question, UNKNOWN_ANSWER, [], [], True, diag,
+                               latency_ms=round((time.perf_counter() - t0) * 1000, 1))
+            debug_trace(self.debug, "RAG", f"answer complete unknown=True reason=no_relevant_chunks latency_ms={result.latency_ms}")
+            return result
         try:
             resp = self.llm.chat(build_messages(question, [h.chunk for h in retrieval.hits], history))
         except LLMError as exc:
@@ -92,4 +100,7 @@ class RAGPipeline:
         result = RAGAnswer(question, text, ordered, cited, unknown, diag, resp.usage,
                            round((time.perf_counter() - t0) * 1000, 1), context=context)
         log_event(log, "rag.done", returned=len(sources), cited=len(cited), unknown=unknown, latency_ms=result.latency_ms)
+        debug_trace(self.debug, "RAG",
+                    f"answer complete sources={len(sources)} cited={cited} invalid_citations={invalid} "
+                    f"unknown={unknown} latency_ms={result.latency_ms}")
         return result

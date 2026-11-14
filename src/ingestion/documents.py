@@ -10,6 +10,8 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Iterable
 
+from src.utils.debug import debug_trace, resolve_debug
+
 SUPPORTED_TYPES = ("pdf", "txt", "csv", "json", "md")
 
 
@@ -91,18 +93,27 @@ def extract_text(data: bytes, doc_type: str) -> str:
     raise UnsupportedDocumentError(f"Unsupported document type: {doc_type}")
 
 
-def load_file(path: str | Path, groups: list[str] | None = None) -> Document:
+def load_file(path: str | Path, groups: list[str] | None = None,
+              debug: bool | str | None = None) -> Document:
     path = Path(path)
     doc_type = path.suffix.lstrip(".").lower().replace("markdown", "md")
     if doc_type not in SUPPORTED_TYPES:
         raise UnsupportedDocumentError(f"Unsupported document type '{doc_type}' for {path.name}")
     data = path.read_bytes()
-    return Document(doc_id=stable_doc_id(str(path)), source_name=path.name, source_path=str(path), doc_type=doc_type,
-                    text=extract_text(data, doc_type), content_hash=content_hash(data),
-                    groups=list(groups or ["public"]))
+    document = Document(doc_id=stable_doc_id(str(path)), source_name=path.name, source_path=str(path), doc_type=doc_type,
+                        text=extract_text(data, doc_type), content_hash=content_hash(data),
+                        groups=list(groups or ["public"]))
+    debug_trace(debug, "INGESTION",
+                f"loaded file={document.source_name!r} type={document.doc_type} bytes={len(data)} "
+                f"characters={len(document.text)} doc_id={document.doc_id} groups={document.groups}")
+    return document
 
 
-def discover_files(root: str | Path, supported: Iterable[str] = SUPPORTED_TYPES) -> list[Path]:
+def discover_files(root: str | Path, supported: Iterable[str] = SUPPORTED_TYPES,
+                   debug: bool | str | None = None) -> list[Path]:
     root = Path(root)
     wanted = {f".{t}" for t in supported} | ({".markdown"} if "md" in supported else set())
-    return sorted(p for p in root.rglob("*") if p.is_file() and p.suffix.lower() in wanted)
+    files = sorted(p for p in root.rglob("*") if p.is_file() and p.suffix.lower() in wanted)
+    debug_trace(resolve_debug(debug), "INGESTION",
+                f"discovered={len(files)} root={str(root)!r} files={[p.name for p in files]}")
+    return files

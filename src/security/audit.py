@@ -30,6 +30,12 @@ class AuditLog:
             self.records.append(entry)
             if self.path:
                 self.path.parent.mkdir(parents=True, exist_ok=True)
-                with self.path.open("a", encoding="utf-8") as fh:
-                    fh.write(json.dumps(entry) + "\n")
+                if self.path.is_relative_to("/Volumes"):
+                    # Unity Catalog volumes support file creation but not append writes.
+                    entries = self.path.with_suffix(".entries")
+                    entries.mkdir(exist_ok=True)
+                    (entries / f"{entry['audit_id']}.json").write_text(json.dumps(entry) + "\n", encoding="utf-8")
+                else:
+                    with self.path.open("a", encoding="utf-8") as fh:
+                        fh.write(json.dumps(entry) + "\n")
         return entry

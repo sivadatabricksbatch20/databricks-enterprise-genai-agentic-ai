@@ -30,8 +30,11 @@
 
 # COMMAND ----------
 
-# MAGIC %pip install -q "mlflow>=3.1" databricks-agents pypdf==5.1.0
-# MAGIC %restart_python
+# MAGIC %pip install -q "mlflow>=3.1" databricks-agents pypdf==5.1.0 "databricks-ai-search>=0.83,<1"
+
+# COMMAND ----------
+
+dbutils.library.restartPython()
 
 # COMMAND ----------
 
@@ -40,6 +43,7 @@ notebook_path = dbutils.notebook.entry_point.getDbutils().notebook().getContext(
 REPO_ROOT = "/Workspace" + notebook_path.split("/notebooks/")[0]
 sys.path.insert(0, REPO_ROOT); os.chdir(REPO_ROOT)
 dbutils.widgets.dropdown("profile", "learning", ["learning", "enterprise"], "Profile")
+dbutils.widgets.dropdown("debug", "yes", ["no", "yes"], "Show configuration trace")
 dbutils.widgets.text("catalog", "main", "UC catalog for the model")
 dbutils.widgets.text("schema", "eika", "UC schema for the model")
 dbutils.widgets.dropdown("deploy_endpoint", "no", ["no", "yes"], "Deploy a serving endpoint (billable)")
@@ -60,7 +64,18 @@ import json
 from mlflow.types.responses import ResponsesAgentRequest
 from src.agents.responses_agent import EikaResponsesAgent
 
-agent = EikaResponsesAgent(profile=PROFILE, role="analyst")
+from src.utils.config import load_config
+from src.utils.enterprise_setup import prepare_enterprise_config
+
+DEBUG = dbutils.widgets.get("debug")
+cfg = prepare_enterprise_config(load_config(PROFILE, debug=DEBUG), spark, REPO_ROOT, debug=DEBUG)
+overrides = {}
+if PROFILE == "enterprise":
+    overrides = {
+        "paths": {key: cfg["paths"][key] for key in ("sample_documents", "work_dir")},
+        "vector_store": {"index_name": cfg["vector_store"]["index_name"]},
+    }
+agent = EikaResponsesAgent(profile=PROFILE, role="analyst", debug=DEBUG, overrides=overrides, spark=spark)
 request = ResponsesAgentRequest(input=[{"role": "user", "content": "Why did yesterday's customer ingestion pipeline fail?"}])
 response = agent.predict(request)
 payload = response.model_dump()                       # ResponsesAgentResponse is a pydantic model
@@ -84,7 +99,7 @@ import mlflow
 from mlflow.models.resources import DatabricksServingEndpoint
 from src.utils.config import load_config
 
-cfg = load_config(PROFILE)
+cfg = load_config(PROFILE, debug=dbutils.widgets.get("debug"))
 user = spark.sql("SELECT current_user()").first()[0]
 mlflow.set_experiment(f"/Users/{user}/eika_agent_serving")
 mlflow.set_registry_uri("databricks-uc")
@@ -95,9 +110,9 @@ with mlflow.start_run(run_name="eika_responses_agent"):
     info = mlflow.pyfunc.log_model(
         name="eika_agent",
         python_model=f"{REPO_ROOT}/src/agents/agent_model.py",     # models from code: MLflow logs this file
-        model_config={"profile": PROFILE, "role": "analyst"},
+        model_config={"profile": PROFILE, "role": "analyst", "debug": DEBUG, "overrides": overrides},
         code_paths=[f"{REPO_ROOT}/src", f"{REPO_ROOT}/config", f"{REPO_ROOT}/data"],
-        pip_requirements=["PyYAML>=6.0", "requests>=2.31", "pypdf>=4.2", "numpy>=1.26", "mlflow>=3.1", "databricks-sdk>=0.40"],
+        pip_requirements=["PyYAML>=6.0", "requests>=2.31", "pypdf>=4.2", "numpy>=1.26", "mlflow>=3.1", "databricks-sdk>=0.40", "databricks-ai-search>=0.83,<1"],
         resources=[DatabricksServingEndpoint(endpoint_name=cfg["llm"]["endpoint"]),
                    DatabricksServingEndpoint(endpoint_name=cfg["embedding"]["endpoint"])],
         input_example=input_example,

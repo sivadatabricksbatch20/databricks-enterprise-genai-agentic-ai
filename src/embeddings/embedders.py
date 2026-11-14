@@ -20,6 +20,7 @@ from typing import Protocol, Sequence
 import numpy as np
 
 from src.utils.databricks_client import DatabricksClient, DatabricksHTTPError
+from src.utils.debug import debug_trace, resolve_debug
 from src.utils.logging import get_logger, log_event
 from src.utils.retry import RetryError, retry_call
 
@@ -55,6 +56,7 @@ class HashingEmbedder:
     model_name: str = "learning-hashing-embedder"
     model_version: str = "1"
     is_learning_substitute: bool = True
+    debug: bool = False
 
     def _vector(self, text: str) -> np.ndarray:
         vec = np.zeros(self.dimension, dtype=np.float32)
@@ -66,9 +68,13 @@ class HashingEmbedder:
         return vec
 
     def embed(self, texts: Sequence[str]) -> np.ndarray:
+        debug_trace(self.debug, "EMBEDDING",
+                    f"starting provider=hashing model={self.model_name!r} texts={len(texts)} dimension={self.dimension}")
         if not texts:
             return np.zeros((0, self.dimension), dtype=np.float32)
-        return normalize(np.vstack([self._vector(t) for t in texts]))
+        result = normalize(np.vstack([self._vector(t) for t in texts]))
+        debug_trace(self.debug, "EMBEDDING", f"complete vectors_shape={result.shape}")
+        return result
 
 
 @dataclass
@@ -82,6 +88,7 @@ class DatabricksEmbedder:
     client: DatabricksClient | None = None
     model_name: str = field(init=False)
     model_version: str = field(init=False, default="unknown")
+    debug: bool = False
 
     def __post_init__(self) -> None:
         self.model_name = self.endpoint
@@ -119,8 +126,14 @@ class DatabricksEmbedder:
 
     def embed(self, texts: Sequence[str]) -> np.ndarray:
         texts = [t if t.strip() else " " for t in texts]
+        batches = math.ceil(len(texts) / self.batch_size) if texts else 0
+        debug_trace(self.debug, "EMBEDDING",
+                    f"starting provider=databricks endpoint={self.endpoint!r} texts={len(texts)} "
+                    f"batch_size={self.batch_size} batches={batches} configured_dimension={self.dimension}")
         vectors: list[list[float]] = []
         for i in range(0, len(texts), self.batch_size):
+            debug_trace(self.debug, "EMBEDDING",
+                        f"request batch={i // self.batch_size + 1}/{batches} texts={len(texts[i:i + self.batch_size])}")
             vectors.extend(self._embed_batch(list(texts[i:i + self.batch_size])))
         arr = np.asarray(vectors, dtype=np.float32).reshape(len(texts), -1) if vectors else \
             np.zeros((0, self.dimension), dtype=np.float32)
@@ -128,16 +141,23 @@ class DatabricksEmbedder:
             self.dimension = arr.shape[1]
         log_event(log, "embeddings.done", endpoint=self.endpoint, count=len(texts),
                   batches=math.ceil(len(texts) / self.batch_size), model_version=self.model_version)
-        return normalize(arr)
+        result = normalize(arr)
+        debug_trace(self.debug, "EMBEDDING",
+                    f"complete endpoint={self.endpoint!r} vectors_shape={result.shape} model_version={self.model_version!r}")
+        return result
 
 
-def build_embedder(cfg: dict) -> Embedder:
+def build_embedder(cfg: dict, debug: bool | str | None = None) -> Embedder:
     emb = cfg["embedding"]
+    debug_on = resolve_debug(debug, cfg)
     provider = emb.get("provider", "databricks")
+    debug_trace(debug_on, "EMBEDDING",
+                f"building provider={provider!r} endpoint={emb.get('endpoint')!r}")
     if provider == "hashing":
         log_event(log, "embeddings.learning_substitute", note="HashingEmbedder is offline and NOT semantic")
-        return HashingEmbedder(dimension=int(emb.get("hashing_dimension", 512)))
+        return HashingEmbedder(dimension=int(emb.get("hashing_dimension", 512)), debug=debug_on)
     if provider == "databricks":
         return DatabricksEmbedder(endpoint=emb["endpoint"], dimension=int(emb.get("dimension", 1024)),
-                                  batch_size=int(emb.get("batch_size", 16)), max_retries=int(emb.get("max_retries", 4)))
+                                  batch_size=int(emb.get("batch_size", 16)), max_retries=int(emb.get("max_retries", 4)),
+                                  debug=debug_on)
     raise ValueError(f"Unknown embedding provider '{provider}'")

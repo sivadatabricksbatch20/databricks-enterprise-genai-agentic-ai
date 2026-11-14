@@ -15,6 +15,7 @@ from dataclasses import asdict, dataclass
 
 from src.ingestion.documents import Document
 from src.processing.cleaning import clean_text
+from src.utils.debug import debug_trace, resolve_debug
 
 SEPARATORS = ("\n\n", "\n", ". ", " ")
 
@@ -82,8 +83,14 @@ def stable_chunk_id(doc_id: str, index: int, text: str) -> str:
     return f"{doc_id}_c{index:04d}_{digest}"
 
 
-def chunk_document(doc: Document, chunk_size: int, chunk_overlap: int, min_chunk_chars: int = 1) -> list[Chunk]:
+def chunk_document(doc: Document, chunk_size: int, chunk_overlap: int, min_chunk_chars: int = 1,
+                   debug: bool | str | None = None) -> list[Chunk]:
+    debug_on = resolve_debug(debug)
     text = clean_text(doc.text)
+    debug_trace(debug_on, "CHUNKING",
+                f"starting document={doc.source_name!r} original_characters={len(doc.text)} "
+                f"clean_characters={len(text)} chunk_size={chunk_size} overlap={chunk_overlap} "
+                f"min_chunk_chars={min_chunk_chars}")
     chunks = []
     for text_part, start in split_text(text, chunk_size, chunk_overlap):
         if len(text_part) < min_chunk_chars:
@@ -93,4 +100,7 @@ def chunk_document(doc: Document, chunk_size: int, chunk_overlap: int, min_chunk
                             chunk_index=index, text=text_part, source_name=doc.source_name,
                             source_path=doc.source_path, doc_type=doc.doc_type, groups=list(doc.groups),
                             start_char=start))
+    debug_trace(debug_on, "CHUNKING",
+                f"complete document={doc.source_name!r} chunks={len(chunks)} "
+                f"sizes={[len(chunk.text) for chunk in chunks]} offsets={[chunk.start_char for chunk in chunks]}")
     return chunks

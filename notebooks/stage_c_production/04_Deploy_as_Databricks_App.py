@@ -40,8 +40,14 @@ sys.path.insert(0, REPO_ROOT); os.chdir(REPO_ROOT)
 dbutils.widgets.text("app_name", "eika-assistant-dev", "App name (lowercase, hyphens)")
 dbutils.widgets.text("llm_endpoint", "databricks-meta-llama-3-3-70b-instruct", "Chat endpoint")
 dbutils.widgets.text("embedding_endpoint", "databricks-bge-large-en", "Embedding endpoint")
+dbutils.widgets.dropdown("debug", "yes", ["no", "yes"], "Show notebook inputs")
 dbutils.widgets.dropdown("deploy", "no", ["no", "yes"], "Create and deploy the app (billable)")
 APP = dbutils.widgets.get("app_name")
+if dbutils.widgets.get("debug") == "yes":
+    print("[EIKA NOTEBOOK] app_name=", APP)
+    print("[EIKA NOTEBOOK] llm_endpoint=", dbutils.widgets.get("llm_endpoint"))
+    print("[EIKA NOTEBOOK] embedding_endpoint=", dbutils.widgets.get("embedding_endpoint"))
+    print("[EIKA NOTEBOOK] deploy=", dbutils.widgets.get("deploy"))
 print("Source code path:", REPO_ROOT, "| app:", APP)
 
 # COMMAND ----------
@@ -78,6 +84,37 @@ if dbutils.widgets.get("deploy") == "yes":
         w.apps.create_and_wait(app=App(name=APP, description="Enterprise Intelligent Knowledge Assistant",
                                        resources=resources))
         print("Created app", APP)
+    from time import monotonic, sleep
+
+    deadline = monotonic() + 600
+    start_requested = False
+    while True:
+        app = w.apps.get(APP)
+        compute = app.compute_status
+        state = getattr(compute.state, "value", compute.state)
+        if state == "ACTIVE":
+            break
+        if state == "STOPPED" and not start_requested:
+            w.apps.start(name=APP)
+            start_requested = True
+        elif state not in {"STARTING", "STOPPING", "STOPPED"}:
+            raise RuntimeError(f"App {APP} compute is {state}: {compute.message}")
+        if monotonic() >= deadline:
+            raise TimeoutError(f"App {APP} compute did not become ACTIVE: {compute.message}")
+        sleep(5)
+
+    # The app queries the existing Stage A index as its own service principal.
+    from databricks.sdk.service.catalog import PermissionsChange, Privilege, SecurableType
+
+    principal = app.service_principal_client_id
+    for kind, name, privilege in (
+        (SecurableType.CATALOG, "gen_ai_lab_practise", Privilege.USE_CATALOG),
+        (SecurableType.SCHEMA, "gen_ai_lab_practise.eika", Privilege.USE_SCHEMA),
+        (SecurableType.TABLE, "gen_ai_lab_practise.eika.document_chunks_index", Privilege.SELECT),
+    ):
+        w.grants.update(kind.value, name, changes=[PermissionsChange(principal=principal, add=[privilege])])
+    print("Application identity granted query access to the Stage A index.")
+
     deployment = w.apps.deploy_and_wait(app_name=APP, app_deployment=AppDeployment(source_code_path=REPO_ROOT))
     app = w.apps.get(APP)
     print("Deployment status:", deployment.status.state, "|", deployment.status.message)

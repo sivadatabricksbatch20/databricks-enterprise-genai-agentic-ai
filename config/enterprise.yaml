@@ -4,16 +4,17 @@
 profile: enterprise
 
 paths:
-  sample_documents: abfss://knowledge@<storage-account>.dfs.core.windows.net/documents   # ADLS Gen2 via a UC external location
+  sample_documents: auto                            # copied to the managed training Volume at runtime
   pipeline_logs: ""                                 # not used: monitoring reads the Jobs API / ADF
   sample_tables: ""
-  work_dir: /Volumes/main/eika/work                 # Unity Catalog volume for manifests and audit files
+  work_dir: auto                                    # /Volumes/<workspace-catalog>/eika/eika_data/work
 
 unity_catalog:
-  catalog: main
+  catalog: auto                                     # resolves to the student's workspace catalog
   schema: eika
-  documents_table: main.eika.documents             # one row per source document (metadata + hash + status)
-  chunks_table: main.eika.document_chunks          # source table for the Vector Search index (Change Data Feed on)
+  volume: eika_data                                # managed training volume, created automatically
+  documents_table: auto.eika.documents             # resolved at notebook runtime
+  chunks_table: auto.eika.document_chunks          # resolved at notebook runtime
 
 ingestion:
   supported_types: [pdf, txt, csv, json, md]
@@ -35,7 +36,7 @@ embedding:
 vector_store:
   backend: databricks_vector_search
   endpoint_name: eika-vs-endpoint
-  index_name: main.eika.document_chunks_index
+  index_name: auto.eika.document_chunks_index      # resolved at notebook runtime
   primary_key: chunk_id
   text_column: text
   embedding_dimension: 1024

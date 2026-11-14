@@ -24,15 +24,25 @@ from src.security.authorization import Principal
 class EikaResponsesAgent(ResponsesAgent):
     """Wraps the orchestrator: the last user message is the investigation request."""
 
-    def __init__(self, profile: str = "learning", role: str = "analyst") -> None:
+    def __init__(self, profile: str = "learning", role: str = "analyst", *,
+                 debug: bool | str | None = None, overrides: dict | None = None, spark=None) -> None:
         self.profile, self.role = profile, role
+        self.debug, self.overrides, self.spark = debug, overrides, spark
         self._agent = None
 
     def _orchestrator(self):
         if self._agent is None:                 # build lazily so model logging does not need workspace access
             from src.assistant import load_agent
             from src.utils.config import load_config
-            self._agent = load_agent(load_config(self.profile))
+            cfg = load_config(self.profile, overrides=self.overrides, debug=self.debug)
+            spark = self.spark
+            if spark is None and cfg.get("data_quality", {}).get("backend") == "spark":
+                try:
+                    from pyspark.sql import SparkSession
+                    spark = SparkSession.getActiveSession()
+                except ImportError:
+                    pass
+            self._agent = load_agent(cfg, spark=spark)
         return self._agent
 
     def predict(self, request: ResponsesAgentRequest) -> ResponsesAgentResponse:

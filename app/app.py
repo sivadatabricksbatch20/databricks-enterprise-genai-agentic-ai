@@ -36,13 +36,18 @@ def get_services(profile: str):
 
 
 profile = os.environ.get("EIKA_PROFILE", "learning")
+hosted_app = os.environ.get("EIKA_HOSTED_APP", "").lower() == "true"
 with st.sidebar:
     st.header("Settings")
     mode = st.radio("Mode", ["Knowledge Q&A (RAG)", "Pipeline investigation (agent)"])
-    role = st.selectbox("Your role", ["analyst", "data_engineer"],
-                        help="Roles decide which tools the agent may use. Only data_engineer can request a restart approval.")
+    role = "analyst"
+    if not hosted_app:
+        role = st.selectbox("Your role", ["analyst", "data_engineer"],
+                            help="Roles decide which tools the agent may use.")
     show_context = st.checkbox("Show retrieved context", value=False)
     st.caption(f"Profile: **{profile}**")
+    if hosted_app and mode.startswith("Pipeline"):
+        st.caption("Enterprise investigation uses the configured jobs and Unity Catalog tables where available.")
     if profile == "learning":
         st.info("Learning profile: pipeline monitoring data and quality-check tables are SYNTHETIC samples.")
     if st.button("Clear chat"):

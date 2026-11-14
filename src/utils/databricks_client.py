@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Callable
 
 import requests
 
@@ -30,16 +30,19 @@ class DatabricksClient:
     host: str
     _token: str
     timeout_s: float = 60.0
+    _authenticate: Callable[[], dict[str, str]] | None = None
 
     @classmethod
     def from_environment(cls, timeout_s: float = 60.0) -> "DatabricksClient":
         host, token = os.environ.get("DATABRICKS_HOST"), os.environ.get("DATABRICKS_TOKEN")
+        authenticate = None
         if not (host and token):
             try:
                 from databricks.sdk import WorkspaceClient  # available on Databricks runtimes and apps
                 cfg = WorkspaceClient().config
                 host = host or cfg.host
-                headers = cfg.authenticate()
+                authenticate = cfg.authenticate
+                headers = authenticate()
                 token = token or headers.get("Authorization", "").removeprefix("Bearer ").strip()
             except Exception as exc:  # pragma: no cover - depends on environment
                 raise DatabricksAuthError(
@@ -49,15 +52,16 @@ class DatabricksClient:
             raise DatabricksAuthError("Databricks host or token could not be resolved")
         if not host.startswith("http"):
             host = "https://" + host
-        return cls(host=host.rstrip("/"), _token=token, timeout_s=timeout_s)
+        return cls(host=host.rstrip("/"), _token=token, timeout_s=timeout_s, _authenticate=authenticate)
 
     def __repr__(self) -> str:  # never show the token
         return f"DatabricksClient(host={self.host!r})"
 
     def request(self, method: str, path: str, body: dict[str, Any] | None = None,
                 params: dict[str, Any] | None = None) -> dict[str, Any]:
+        headers = self._authenticate() if self._authenticate else {"Authorization": f"Bearer {self._token}"}
         resp = requests.request(method, f"{self.host}{path}", json=body, params=params, timeout=self.timeout_s,
-                                headers={"Authorization": f"Bearer {self._token}"})
+                                headers=headers)
         if resp.status_code >= 400:
             try:
                 retry_after = float(resp.headers.get("Retry-After", "")) if resp.headers.get("Retry-After") else None

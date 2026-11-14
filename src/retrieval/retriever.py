@@ -11,6 +11,7 @@ from src.retrieval.vector_store import SearchHit, VectorStore
 from src.security.authorization import Principal, can_read_document
 from src.security.prompt_injection import scan
 from src.utils.logging import get_logger, log_event
+from src.utils.debug import debug_trace, resolve_debug, short_text
 
 log = get_logger("eika.retrieval")
 _WORD = re.compile(r"[a-z0-9]+")
@@ -51,17 +52,22 @@ class Retriever:
     similarity_threshold: float = 0.3
     reranker: str = "lexical"
     candidate_multiplier: int = 3
+    debug: bool = False
 
     @classmethod
-    def from_config(cls, cfg: dict[str, Any], embedder: Embedder, store: VectorStore) -> "Retriever":
+    def from_config(cls, cfg: dict[str, Any], embedder: Embedder, store: VectorStore,
+                    debug: bool | str | None = None) -> "Retriever":
         r = cfg["retrieval"]
         return cls(embedder, store, int(r.get("top_k", 4)), float(r.get("similarity_threshold", 0.3)),
-                   r.get("reranker", "lexical"), int(r.get("candidate_multiplier", 3)))
+                   r.get("reranker", "lexical"), int(r.get("candidate_multiplier", 3)), resolve_debug(debug, cfg))
 
     def retrieve(self, question: str, filters: dict[str, Any] | None = None, principal: Principal | None = None,
                  top_k: int | None = None) -> RetrievalResult:
         k = top_k or self.top_k
         t0 = time.perf_counter()
+        debug_trace(self.debug, "RETRIEVAL",
+                    f"starting question={short_text(question)!r} top_k={k} candidate_multiplier={self.candidate_multiplier} "
+                    f"threshold={self.similarity_threshold} filters={filters or {}}")
         qvec = self.embedder.embed([question])[0]
         candidates = self.store.search(qvec, k * self.candidate_multiplier, filters)
         n_candidates = len(candidates)
@@ -81,4 +87,6 @@ class Retriever:
             "latency_ms": round((time.perf_counter() - t0) * 1000, 1), "filters": filters or {},
         }
         log_event(log, "retrieval.done", **{k_: v for k_, v in diagnostics.items() if k_ != "filters"})
+        debug_trace(self.debug, "RETRIEVAL",
+                    f"complete diagnostics={diagnostics} sources={[h.chunk.get('source_name') for h in hits]}")
         return RetrievalResult(question, hits, diagnostics)

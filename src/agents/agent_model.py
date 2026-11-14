@@ -13,5 +13,8 @@ from mlflow.models import ModelConfig
 
 from src.agents.responses_agent import EikaResponsesAgent
 
-_config = ModelConfig(development_config={"profile": "learning", "role": "analyst"})
-mlflow.models.set_model(EikaResponsesAgent(profile=_config.get("profile"), role=_config.get("role")))
+_config = ModelConfig(development_config={"profile": "learning", "role": "analyst", "debug": False, "overrides": None})
+mlflow.models.set_model(EikaResponsesAgent(
+    profile=_config.get("profile"), role=_config.get("role"),
+    debug=_config.get("debug"), overrides=_config.get("overrides"),
+))

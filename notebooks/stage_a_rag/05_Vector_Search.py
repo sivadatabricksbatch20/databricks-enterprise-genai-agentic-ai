@@ -27,7 +27,11 @@
 
 # COMMAND ----------
 
-# MAGIC %pip install -q pypdf==5.1.0
+# MAGIC %pip install -q pypdf==5.1.0 "databricks-ai-search>=0.83,<1"
+
+# COMMAND ----------
+
+dbutils.library.restartPython()
 
 # COMMAND ----------
 
@@ -36,9 +40,21 @@ notebook_path = dbutils.notebook.entry_point.getDbutils().notebook().getContext(
 REPO_ROOT = "/Workspace" + notebook_path.split("/notebooks/")[0]
 sys.path.insert(0, REPO_ROOT); os.chdir(REPO_ROOT)
 dbutils.widgets.dropdown("profile", "learning", ["learning", "enterprise"], "Profile")
+dbutils.widgets.dropdown("debug", "yes", ["no", "yes"], "Show configuration trace")
 dbutils.widgets.dropdown("rebuild", "no", ["no", "yes"], "Rebuild index from scratch")
 from src.utils.config import load_config
-cfg = load_config(dbutils.widgets.get("profile"))
+from src.utils.enterprise_setup import prepare_enterprise_config
+cfg = load_config(dbutils.widgets.get("profile"), debug=dbutils.widgets.get("debug"))
+cfg = prepare_enterprise_config(cfg, spark, REPO_ROOT, debug=dbutils.widgets.get("debug"))
+
+# Create the shared search endpoint before build_index creates and populates the index.
+if cfg["vector_store"]["backend"] == "databricks_vector_search":
+    from databricks.ai_search.client import AISearchClient
+    vsc = AISearchClient(disable_notice=True)
+    endpoint = cfg["vector_store"]["endpoint_name"]
+    if not vsc.endpoint_exists(endpoint):
+        vsc.create_endpoint_and_wait(name=endpoint, endpoint_type="STANDARD")
+    print("AI Search endpoint ready:", endpoint)
 
 # COMMAND ----------
 
@@ -65,12 +81,7 @@ print("index:", report.as_dict())
 # COMMAND ----------
 
 if cfg["vector_store"]["backend"] == "databricks_vector_search":
-    from databricks.vector_search.client import VectorSearchClient
-    vsc = VectorSearchClient(disable_notice=True)
-    endpoint = cfg["vector_store"]["endpoint_name"]
-    if endpoint not in [e["name"] for e in vsc.list_endpoints().get("endpoints", [])]:
-        vsc.create_endpoint_and_wait(name=endpoint, endpoint_type="STANDARD")
-    print("Vector Search endpoint ready:", endpoint, "| index:", cfg["vector_store"]["index_name"])
+    print("AI Search endpoint ready:", endpoint, "| index:", cfg["vector_store"]["index_name"])
 else:
     print("Learning profile: in-memory index (engine:", getattr(store, "engine", "?"), ") with", store.count(), "chunks")
 

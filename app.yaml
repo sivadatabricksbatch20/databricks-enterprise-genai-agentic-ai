@@ -8,7 +8,13 @@ command:
   - --server.headless=true
 env:
   - name: EIKA_PROFILE
-    value: learning
+    value: enterprise
+  - name: EIKA__VECTOR_STORE__INDEX_NAME
+    value: gen_ai_lab_practise.eika.document_chunks_index
+  - name: EIKA__PATHS__WORK_DIR
+    value: /tmp/eika-app
+  - name: EIKA_HOSTED_APP
+    value: "true"
   - name: EIKA__LLM__ENDPOINT
     valueFrom: llm-endpoint
   - name: EIKA__EMBEDDING__ENDPOINT

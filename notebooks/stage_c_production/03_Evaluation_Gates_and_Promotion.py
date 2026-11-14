@@ -27,8 +27,11 @@
 
 # COMMAND ----------
 
-# MAGIC %pip install -q "mlflow>=3.1" pypdf==5.1.0
-# MAGIC %restart_python
+# MAGIC %pip install -q "mlflow>=3.1" pypdf==5.1.0 "databricks-ai-search>=0.83,<1"
+
+# COMMAND ----------
+
+dbutils.library.restartPython()
 
 # COMMAND ----------
 
@@ -38,10 +41,13 @@ notebook_path = dbutils.notebook.entry_point.getDbutils().notebook().getContext(
 REPO_ROOT = "/Workspace" + notebook_path.split("/notebooks/")[0]
 sys.path.insert(0, REPO_ROOT); os.chdir(REPO_ROOT)
 dbutils.widgets.dropdown("profile", "learning", ["learning", "enterprise"], "Profile")
+dbutils.widgets.dropdown("debug", "yes", ["no", "yes"], "Show configuration trace")
 dbutils.widgets.dropdown("promote", "no", ["no", "yes"], "Promote if gates pass")
 dbutils.widgets.text("uc_model", "", "UC model to alias as champion (optional, from Stage C 01)")
 from src.utils.config import load_config
-cfg = load_config(dbutils.widgets.get("profile"))
+from src.utils.enterprise_setup import prepare_enterprise_config
+cfg = load_config(dbutils.widgets.get("profile"), debug=dbutils.widgets.get("debug"))
+cfg = prepare_enterprise_config(cfg, spark, REPO_ROOT, debug=dbutils.widgets.get("debug"))
 
 # COMMAND ----------
 
