@@ -56,6 +56,13 @@ streamlit run app/app.py
 
 ## Run on Databricks
 
+Open `00_Create_EIKA_Job.py` as a notebook in your Databricks Git folder and run all cells.
+Use `profile=learning` for the sample lab and add a unique job name suffix in a shared workspace.
+Open **EIKA - Stage A (RAG)** from the notebook output and run it. After it succeeds, run
+**EIKA - Stage B and C** with the same profile. The setup creates or updates both jobs.
+It leaves deployment, promotion, and automatic runs disabled by default. The hosted app
+configuration must be adapted to your workspace before enabling app deployment.
+
 Import the folder (Git folder or workspace import), then run the notebooks in order:
 `notebooks/stage_a_rag/01…07`, then `notebooks/stage_b_agentic_ai/01…07`. Each notebook finds the project root from its
 own path. Then `notebooks/stage_c_production/01…04` cover serving with MLflow `ResponsesAgent`, Databricks Vector Search with retrieval through the managed MCP server, evaluation gates and promotion, and deployment as a Databricks App. Step-by-step: [docs/execution_guide.md](docs/execution_guide.md). DBC archives exported from Databricks are in `dbc/`.
