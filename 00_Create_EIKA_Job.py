@@ -98,9 +98,8 @@ def chain(items):
 
 # MAGIC %md
 # MAGIC ## Create or update both jobs
-# MAGIC Job creation leaves the app deployment exercise off. The hosted app configuration
-# MAGIC in this repository points to the instructor's index and must be adapted before
-# MAGIC a student deploys an app in a different workspace.
+# MAGIC Job creation leaves the app deployment exercise off. Stage C notebook 04
+# MAGIC uses the same workspace catalog selection as Stage A when deploying the app.
 
 # COMMAND ----------
 

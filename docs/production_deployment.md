@@ -5,10 +5,18 @@
 - Workspace-specific values come from `EIKA__…` environment variables on jobs and the app, never from committed files.
 
 ## Asset Bundle
+Build the enterprise index before attaching it to the app.
+
+```bash
+databricks bundle deploy -t prod --select eika_build_index
+databricks bundle run eika_build_index -t prod
+```
+
+Set `BUNDLE_VAR_vector_search_index` to the full index name printed by Stage A, then deploy the app and remaining resources.
+
 ```bash
 databricks bundle validate -t prod
-databricks bundle deploy   -t prod
-databricks bundle run eika_build_index -t prod
+databricks bundle deploy -t prod
 ```
 Resources: `eika_build_index` (ingest → chunk → index), `eika_evaluate` (weekly, paused by default), app `eika-assistant`.
 In `prod`, set `run_as` to the indexing service principal.

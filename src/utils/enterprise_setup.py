@@ -15,7 +15,7 @@ def _quote(identifier: str) -> str:
     return f"`{identifier.replace('`', '``')}`"
 
 
-def _workspace_catalog(spark, configured: str | None) -> str:
+def resolve_workspace_catalog(spark, configured: str | None) -> str:
     """Resolve the workspace catalog without silently choosing an unrelated catalog."""
     catalogs = [row[0] for row in spark.sql("SHOW CATALOGS").collect()]
     lookup = {name.lower(): name for name in catalogs}
@@ -59,7 +59,7 @@ def prepare_enterprise_config(
         return cfg
 
     cfg = copy.deepcopy(cfg)
-    catalog = _workspace_catalog(spark, cfg.get("unity_catalog", {}).get("catalog"))
+    catalog = resolve_workspace_catalog(spark, cfg.get("unity_catalog", {}).get("catalog"))
     schema = cfg.get("unity_catalog", {}).get("schema", "eika")
     volume = cfg.get("unity_catalog", {}).get("volume", "eika_data")
 

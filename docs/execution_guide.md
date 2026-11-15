@@ -41,10 +41,12 @@ Steps that create billable resources are behind widgets that default to **no**; 
 ## The app
 
 - **Local:** `streamlit run app/app.py` with `DATABRICKS_HOST` and `DATABRICKS_TOKEN` set.
-- **Databricks Apps:** `databricks bundle deploy -t dev` then start `eika-assistant` under *Compute → Apps*, or create an
-  app from the workspace folder; the entry point is `app.yaml`.
+- **Databricks Apps:** Run Stage A with the enterprise profile, then run Stage C notebook 04 with
+  `deploy=yes`. If you explicitly selected a catalog in Stage A, set the notebook's `catalog` widget to the
+  same value. The notebook attaches the index to the app as the `vector-search-index` resource.
 
 ## Jobs
 
-`databricks bundle deploy -t dev`, then run `eika - build knowledge index` (ingestion → chunking → index) and
-`eika - evaluate RAG and agent`.
+Run `00_Create_EIKA_Job` to create the two course jobs from the workspace notebooks. For a bundle-only
+index build, deploy just the build job with `databricks bundle deploy -t dev --select eika_build_index --var profile=enterprise`,
+then run it with `databricks bundle run eika_build_index -t dev --var profile=enterprise`.

@@ -10,7 +10,7 @@ env:
   - name: EIKA_PROFILE
     value: enterprise
   - name: EIKA__VECTOR_STORE__INDEX_NAME
-    value: gen_ai_lab_practise.eika.document_chunks_index
+    valueFrom: vector-search-index
   - name: EIKA__PATHS__WORK_DIR
     value: /tmp/eika-app
   - name: EIKA_HOSTED_APP

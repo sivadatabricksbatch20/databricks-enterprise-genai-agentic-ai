@@ -24,6 +24,10 @@ variables:
     description: Embedding endpoint used for questions (must match the index)
     default: databricks-bge-large-en
 
+  vector_search_index:
+    description: Full catalog.schema.index name printed by Stage A, required when deploying the app
+    default: ""
+
 targets:
   dev:
     mode: development
@@ -54,6 +58,11 @@ resources:
           serving_endpoint:
             name: ${var.llm_endpoint}
             permission: CAN_QUERY
+        - name: vector-search-index
+          uc_securable:
+            securable_full_name: ${var.vector_search_index}
+            securable_type: TABLE
+            permission: SELECT
         - name: embedding-endpoint
           serving_endpoint:
             name: ${var.embedding_endpoint}

@@ -24,11 +24,14 @@
 # MAGIC | Asset Bundle (recommended, CI/CD) | `databricks bundle deploy -t dev` then `databricks bundle run eika_app -t dev` |
 # MAGIC | From this notebook (SDK) | the cells below |
 # MAGIC
+# MAGIC For a bundle deployment, set `BUNDLE_VAR_vector_search_index` to the full index name printed by Stage A.
+# MAGIC The notebook resolves the catalog as Stage A does. Set the `catalog` widget if Stage A used an explicit override.
+# MAGIC
 # MAGIC **Cost:** a running app bills for its compute. The last cell stops it.
 
 # COMMAND ----------
 
-# MAGIC %pip install -q "databricks-sdk>=0.40"
+# MAGIC %pip install -q --upgrade databricks-sdk
 # MAGIC %restart_python
 
 # COMMAND ----------
@@ -37,6 +40,7 @@ import os, sys
 notebook_path = dbutils.notebook.entry_point.getDbutils().notebook().getContext().notebookPath().get()
 REPO_ROOT = "/Workspace" + notebook_path.split("/notebooks/")[0]
 sys.path.insert(0, REPO_ROOT); os.chdir(REPO_ROOT)
+dbutils.widgets.text("catalog", "", "Unity Catalog override (blank uses enterprise profile)")
 dbutils.widgets.text("app_name", "eika-assistant-dev", "App name (lowercase, hyphens)")
 dbutils.widgets.text("llm_endpoint", "databricks-meta-llama-3-3-70b-instruct", "Chat endpoint")
 dbutils.widgets.text("embedding_endpoint", "databricks-bge-large-en", "Embedding endpoint")
@@ -68,22 +72,53 @@ print(open(f"{REPO_ROOT}/app.yaml").read())
 # COMMAND ----------
 
 from databricks.sdk import WorkspaceClient
+from databricks.sdk.errors import NotFound
+from src.utils.config import load_config
+from src.utils.enterprise_setup import resolve_workspace_catalog
 from databricks.sdk.service.apps import (App, AppDeployment, AppResource, AppResourceServingEndpoint,
                                          AppResourceServingEndpointServingEndpointPermission as Perm)
 
 w = WorkspaceClient()
 if dbutils.widgets.get("deploy") == "yes":
+    uc = load_config("enterprise")["unity_catalog"]
+    catalog = resolve_workspace_catalog(spark, dbutils.widgets.get("catalog").strip() or uc["catalog"])
+    schema = uc["schema"]
+    index_name = f"{catalog}.{schema}.document_chunks_index"
+    try:
+        w.vector_search_indexes.get_index(index_name=index_name)
+    except NotFound as exc:
+        raise RuntimeError(
+            f"Stage A index {index_name} was not found. Run Stage A with the enterprise profile "
+            "or set the catalog widget to the catalog used by Stage A."
+        ) from exc
+    print("Stage A index:", index_name)
+
     resources = [
+        AppResource.from_dict({
+            "name": "vector-search-index",
+            "uc_securable": {
+                "securable_full_name": index_name,
+                "securable_type": "TABLE",
+                "permission": "SELECT",
+            },
+        }),
         AppResource(name="llm-endpoint", serving_endpoint=AppResourceServingEndpoint(
             name=dbutils.widgets.get("llm_endpoint"), permission=Perm.CAN_QUERY)),
         AppResource(name="embedding-endpoint", serving_endpoint=AppResourceServingEndpoint(
             name=dbutils.widgets.get("embedding_endpoint"), permission=Perm.CAN_QUERY)),
     ]
-    existing = {a.name for a in w.apps.list()}
-    if APP not in existing:
+    try:
+        app = w.apps.get(APP)
+    except NotFound:
         w.apps.create_and_wait(app=App(name=APP, description="Enterprise Intelligent Knowledge Assistant",
                                        resources=resources))
         print("Created app", APP)
+    else:
+        existing = {resource.name: resource for resource in app.resources or []}
+        if any(existing.get(resource.name) != resource for resource in resources):
+            existing.update({resource.name: resource for resource in resources})
+            app.resources = list(existing.values())
+            w.apps.update(name=APP, app=app)
     from time import monotonic, sleep
 
     deadline = monotonic() + 600
@@ -102,18 +137,6 @@ if dbutils.widgets.get("deploy") == "yes":
         if monotonic() >= deadline:
             raise TimeoutError(f"App {APP} compute did not become ACTIVE: {compute.message}")
         sleep(5)
-
-    # The app queries the existing Stage A index as its own service principal.
-    from databricks.sdk.service.catalog import PermissionsChange, Privilege, SecurableType
-
-    principal = app.service_principal_client_id
-    for kind, name, privilege in (
-        (SecurableType.CATALOG, "gen_ai_lab_practise", Privilege.USE_CATALOG),
-        (SecurableType.SCHEMA, "gen_ai_lab_practise.eika", Privilege.USE_SCHEMA),
-        (SecurableType.TABLE, "gen_ai_lab_practise.eika.document_chunks_index", Privilege.SELECT),
-    ):
-        w.grants.update(kind.value, name, changes=[PermissionsChange(principal=principal, add=[privilege])])
-    print("Application identity granted query access to the Stage A index.")
 
     deployment = w.apps.deploy_and_wait(app_name=APP, app_deployment=AppDeployment(source_code_path=REPO_ROOT))
     app = w.apps.get(APP)
